@@ -1,0 +1,20 @@
+# --- Java ---
+*.class
+*.jar
+*.war
+*.ear
+
+# --- Eclipse ---
+.metadata/
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+.settings/
+.project
+.classpath
+
+# --- OS ---
+.DS_Store
+Thumbs.db
