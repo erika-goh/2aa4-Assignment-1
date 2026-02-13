@@ -39,8 +39,8 @@ public class Game {
 
 	/**
 	 * 
-	 * @param board 
-	 * @param players 
+	 * @param board
+	 * @param players
 	 */
 	public Game(Board board, List<Player> players) {
 		this.board = board;
@@ -49,7 +49,7 @@ public class Game {
 		this.configuration = new Configuration();
 		this.resourceBank = new ResourceBank();
 		this.agents = new ArrayList<>();
-		
+
 		// Create agents for each player
 		for (Player player : players) {
 			agents.add(new Agent(player));
@@ -58,7 +58,7 @@ public class Game {
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public int getRound() {
 		return currentRound;
@@ -66,91 +66,111 @@ public class Game {
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public void playRound() {
 		currentRound++;
-		
-		// Each agent takes a turn
+
+		// Each agent takes a turn, captures the chosen action, and applies it
 		for (Agent agent : agents) {
-			agent.takeTurn(board, resourceBank);
+			Action action = agent.takeTurn(currentRound, board, resourceBank);
+			System.out.println(action);
+			applyAction(action, agent.getPlayer());
 		}
-		
+
 		printRoundSummary();
 	}
 
 	/**
+	 * Applies the effect of an Action to the game state.
+	 * Agent decides *what* to do; Game decides *how* it affects state (SOLID).
 	 * 
-	 * @return 
+	 * @param action the action chosen by the agent
+	 * @param player the player who performed the action
+	 */
+	private void applyAction(Action action, Player player) {
+		String desc = action.getDescription();
+
+		if (desc.equals("BUILD_SETTLEMENT")) {
+			player.addVictoryPoints(1);
+		} else if (desc.equals("BUILD_CITY")) {
+			player.addVictoryPoints(2);
+		}
+		// BUILD_ROAD and PASS have no VP effect
+	}
+
+	/**
+	 * 
+	 * @return
 	 */
 	public boolean checkTermination() {
 		// Check if max rounds reached
 		if (currentRound >= configuration.getMaxRounds()) {
 			return true;
 		}
-		
+
 		// Check if any player has 10 victory points
 		for (Player player : players) {
 			if (player.getVictoryPoints() >= 10) {
 				return true;
 			}
 		}
-		
+
 		return false;
 	}
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public Player getWinner() {
 		Player winner = null;
 		int maxVP = 0;
-		
+
 		for (Player player : players) {
 			if (player.getVictoryPoints() > maxVP) {
 				maxVP = player.getVictoryPoints();
 				winner = player;
 			}
 		}
-		
+
 		return winner;
 	}
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public void startGame() {
 		currentRound = 0;
-		
+
 		while (!checkTermination()) {
 			playRound();
 		}
-		
+
 		Player winner = getWinner();
 		if (winner != null) {
-			System.out.println("Game Over! Winner: Player " + winner.getId() + 
-				" with " + winner.getVictoryPoints() + " victory points");
+			System.out.println("Game Over! Winner: Player " + winner.getId() +
+					" with " + winner.getVictoryPoints() + " victory points");
 		}
 	}
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public void printRoundSummary() {
 		System.out.println("=== Round " + currentRound + " Summary ===");
 		for (Player player : players) {
-			System.out.println("Player " + player.getId() + ": " + 
-				player.getVictoryPoints() + " VP");
+			System.out.println("Player " + player.getId() + ": " +
+					player.getVictoryPoints() + " VP");
 		}
 		System.out.println();
 	}
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public ResourceBank getResourceBank() {
 		return resourceBank;
@@ -158,7 +178,7 @@ public class Game {
 
 	/**
 	 * 
-	 * @param configuration 
+	 * @param configuration
 	 */
 	public void setConfiguration(Configuration configuration) {
 		this.configuration = configuration;
@@ -166,7 +186,7 @@ public class Game {
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public Board getBoard() {
 		return board;
@@ -174,7 +194,7 @@ public class Game {
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public List<Player> getPlayers() {
 		return players;

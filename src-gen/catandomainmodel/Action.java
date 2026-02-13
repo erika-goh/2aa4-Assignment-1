@@ -24,9 +24,9 @@ public class Action {
 
 	/**
 	 * 
-	 * @param roundNumber 
-	 * @param playerID 
-	 * @param description 
+	 * @param roundNumber
+	 * @param playerID
+	 * @param description
 	 */
 	public Action(int roundNumber, int playerID, String description) {
 		this.roundNumber = roundNumber;
@@ -36,7 +36,15 @@ public class Action {
 
 	/**
 	 * 
-	 * @return 
+	 * @return the action description (e.g. BUILD_SETTLEMENT, PASS)
+	 */
+	public String getDescription() {
+		return description;
+	}
+
+	/**
+	 * 
+	 * @return
 	 */
 	public String toString() {
 		return "[" + roundNumber + "] / [" + playerID + "]: " + description;

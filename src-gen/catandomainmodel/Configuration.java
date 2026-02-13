@@ -22,13 +22,13 @@ public class Configuration {
 	 * 
 	 */
 	public Configuration() {
-		this.maxRounds = 8192; // Default maximum
+		this.maxRounds = 500; // Safety-net maximum; game should end via VP threshold first
 	}
 
 	/**
 	 * 
-	 * @param filePath 
-	 * @return 
+	 * @param filePath
+	 * @return
 	 */
 	public void loadFromFile(String filePath) {
 		try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
@@ -50,7 +50,7 @@ public class Configuration {
 
 	/**
 	 * 
-	 * @return 
+	 * @return
 	 */
 	public int getMaxRounds() {
 		return maxRounds;
