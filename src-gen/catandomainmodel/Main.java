@@ -1,28 +1,34 @@
+// --------------------------------------------------------
+// Main: minimal entry point for the Catan simulator demonstrator.
+//
+// Design rationale:
+// - Main contains NO simulation or setup logic (SRP).
+// - It delegates to Simulator, which owns object creation.
+// - Simulator delegates to Game, which owns round execution.
+// - This two-level delegation keeps Main trivially simple and
+//   means new features never require changes to this file (OCP).
+// --------------------------------------------------------
+
 package catandomainmodel;
 
-import java.util.ArrayList;
-import java.util.List;
-
+/**
+ * Demonstrator entry point for the Catan simulator.
+ */
 public class Main {
 
     public static void main(String[] args) {
-        System.out.println("=== Catan Simulator Started ===");
+        System.out.println("========================================");
+        System.out.println("   Settlers of Catan – Simulator Demo   ");
+        System.out.println("========================================");
+        System.out.println();
 
-        // Minimal board for scaffold (will be populated later)
-        List<Tile> tiles = new ArrayList<>();
-        List<Node> nodes = new ArrayList<>();
-        List<Edge> edges = new ArrayList<>();
-        Board board = new Board(tiles, nodes, edges);
+        // Setup + execution fully encapsulated in Simulator
+        Simulator simulator = new Simulator();
+        simulator.run();
 
-        // Create 4 players (may need adjusting depending on Player constructor)
-        List<Player> players = new ArrayList<>();
-        for (int i = 1; i <= 4; i++) {
-            players.add(new Player(i));
-        }
-
-        Game game = new Game(board, players);
-        game.startGame();
-
-        System.out.println("=== Simulation Finished ===");
+        System.out.println();
+        System.out.println("========================================");
+        System.out.println("          Simulation Complete            ");
+        System.out.println("========================================");
     }
 }
