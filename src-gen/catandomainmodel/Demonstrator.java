@@ -14,7 +14,7 @@ package catandomainmodel;
 /**
  * Demonstrator entry point for the Catan simulator.
  */
-public class Main {
+public class Demonstrator {
 
     public static void main(String[] args) {
         System.out.println("========================================");
