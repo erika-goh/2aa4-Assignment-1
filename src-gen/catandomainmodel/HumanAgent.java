@@ -5,15 +5,19 @@
 package catandomainmodel;
 
 import java.util.Scanner;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /************************************************************/
 /**
  * A human-controlled agent that reads commands from the console.
  * Implements IAgent directly (does NOT extend Agent) per UML.
  *
- * Turn flow:  waitForGo() → roll → parse commands → return Action.
+ * Turn flow: waitForGo() → roll → parse commands → return Action.
  */
 public class HumanAgent implements IAgent {
+
+    private static final Logger LOGGER = Logger.getLogger(HumanAgent.class.getName());
 
     private Scanner scanner;
     private CommandParser parser;
@@ -40,18 +44,19 @@ public class HumanAgent implements IAgent {
 
     /**
      * Turn automaton for human player:
-     *   1. Display prompt
-     *   2. Read and parse command
-     *   3. Return the resulting Action
+     * 1. Display prompt
+     * 2. Read and parse command
+     * 3. Return the resulting Action
      */
     @Override
     public Action takeTurn(int roundNumber, Board board, ResourceBank resourceBank) {
-        System.out.println("\n=== Player " + player.getId() + "'s turn (Round " + roundNumber + ") ===");
-        System.out.println("Your resources: " + player.getResourceHand().getResources());
-        System.out.println("Commands: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
+        LOGGER.log(Level.INFO, "\n=== Player {0}''s turn (Round {1}) ===",
+                new Object[] { player.getId(), roundNumber });
+        LOGGER.log(Level.INFO, "Your resources: {0}", player.getResourceHand().getResources());
+        LOGGER.info("Commands: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
 
         while (true) {
-            System.out.print("> ");
+            LOGGER.info("> ");
             if (!scanner.hasNextLine()) {
                 // EOF — pass
                 return new Action(roundNumber, player.getId(), "PASS", ActionType.PASS);
@@ -67,7 +72,8 @@ public class HumanAgent implements IAgent {
                 // Fill in the round and player info
                 return new Action(roundNumber, player.getId(), action.getDescription(), action.getActionType());
             } else {
-                System.out.println("Invalid command. Try: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
+                LOGGER.info(
+                        "Invalid command. Try: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
             }
         }
     }
@@ -77,9 +83,9 @@ public class HumanAgent implements IAgent {
      * This is NOT a gameplay action — it is flow control for the simulator.
      */
     public void waitForGo() {
-        System.out.println("Type 'go' to proceed to the next step.");
+        LOGGER.info("Type 'go' to proceed to the next step.");
         while (true) {
-            System.out.print(">> ");
+            LOGGER.info(">> ");
             if (!scanner.hasNextLine()) {
                 return;
             }
@@ -87,7 +93,7 @@ public class HumanAgent implements IAgent {
             if (input.equalsIgnoreCase("go")) {
                 return;
             }
-            System.out.println("Type 'go' to continue.");
+            LOGGER.info("Type 'go' to continue.");
         }
     }
 }

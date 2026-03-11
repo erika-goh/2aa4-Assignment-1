@@ -98,7 +98,7 @@ public class Game {
             }
 
             // Roll dice
-            int diceRoll = rollDiceForPlayer(player);
+            int diceRoll = rollDiceForPlayer();
             LOGGER.log(Level.INFO, "Player {0} rolled: {1}", new Object[] { player.getId(), diceRoll });
 
             // Resolve roll
@@ -249,26 +249,31 @@ public class Game {
         return null;
     }
 
-    private int rollDiceForPlayer(Player player) {
+    private int rollDiceForPlayer() {
         return (random.nextInt(6) + 1) + (random.nextInt(6) + 1);
     }
 
     private void distributeResources(int diceRoll) {
         for (Tile tile : board.getTiles()) {
-            if (tile.getNumber() == diceRoll) {
-                if (board.getRobber().getLocation() != null
-                        && board.getRobber().getLocation().getId() == tile.getId()) {
-                    continue;
-                }
-                for (Node node : board.getNodes()) {
-                    if (node.getStructure() != null) {
-                        Player owner = node.getStructure().getOwner();
-                        int amount = node.getStructure().getVictoryPoints();
-                        if (resourceBank.hasResource(tile.getResourceType(), amount)) {
-                            resourceBank.takeResource(tile.getResourceType(), amount);
-                            owner.getResourceHand().add(tile.getResourceType(), amount);
-                        }
-                    }
+            if (tile.getNumber() == diceRoll && !isRobberOnTile(tile)) {
+                processTileResources(tile);
+            }
+        }
+    }
+
+    private boolean isRobberOnTile(Tile tile) {
+        return board.getRobber().getLocation() != null
+                && board.getRobber().getLocation().getId() == tile.getId();
+    }
+
+    private void processTileResources(Tile tile) {
+        for (Node node : board.getNodes()) {
+            if (node.getStructure() != null) {
+                Player owner = node.getStructure().getOwner();
+                int amount = node.getStructure().getVictoryPoints();
+                if (resourceBank.hasResource(tile.getResourceType(), amount)) {
+                    resourceBank.takeResource(tile.getResourceType(), amount);
+                    owner.getResourceHand().add(tile.getResourceType(), amount);
                 }
             }
         }
