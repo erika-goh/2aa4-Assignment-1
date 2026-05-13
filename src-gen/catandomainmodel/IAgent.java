@@ -13,10 +13,8 @@ public interface IAgent {
     /**
      * Take a turn in the game.
      *
-     * @param roundNumber   the current round number
-     * @param board         the game board
-     * @param resourceBank  the shared resource bank
+     * @param game          the game controller instance
      * @return the Action chosen during this turn
      */
-    Action takeTurn(int roundNumber, Board board, ResourceBank resourceBank);
+    Action takeTurn(Game game);
 }

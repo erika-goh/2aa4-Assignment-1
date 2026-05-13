@@ -4,7 +4,9 @@
 
 package catandomainmodel;
 
+import catanutils.GameStateExporter;
 import java.security.SecureRandom;
+import java.util.Scanner;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -20,6 +22,23 @@ import java.util.logging.Logger;
 public class Game {
     private static final Logger LOGGER = Logger.getLogger(Game.class.getName());
 
+    // --- Cost maps (used for affordability guards) ---
+    private static final java.util.Map<ResourceType, Integer> SETTLEMENT_COST = new java.util.EnumMap<>(
+            ResourceType.class);
+    private static final java.util.Map<ResourceType, Integer> CITY_COST = new java.util.EnumMap<>(ResourceType.class);
+    private static final java.util.Map<ResourceType, Integer> ROAD_COST = new java.util.EnumMap<>(ResourceType.class);
+
+    static {
+        SETTLEMENT_COST.put(ResourceType.BRICK, 1);
+        SETTLEMENT_COST.put(ResourceType.LUMBER, 1);
+        SETTLEMENT_COST.put(ResourceType.WOOL, 1);
+        SETTLEMENT_COST.put(ResourceType.GRAIN, 1);
+        CITY_COST.put(ResourceType.ORE, 3);
+        CITY_COST.put(ResourceType.GRAIN, 2);
+        ROAD_COST.put(ResourceType.BRICK, 1);
+        ROAD_COST.put(ResourceType.LUMBER, 1);
+    }
+
     private List<Player> players;
     private Board board;
     private int round;
@@ -27,7 +46,17 @@ public class Game {
     private List<IAgent> agents;
     private ResourceBank resourceBank;
     private GameStateExporter gameStateExporter;
+    private CommandManager commandManager;
     private Random random;
+    private Scanner scanner;
+    /**
+     * True once the 8-step setup phase finishes; triggers resource/legality guards.
+     */
+    private boolean setupComplete = false;
+
+    // --- Longest Road Tracking ---
+    private Player longestRoadHolder = null;
+    private int longestRoadLength = 4; // minimum threshold is 5
 
     public Game(Board board, List<Player> players, List<IAgent> agents) {
         this.board = board;
@@ -37,11 +66,17 @@ public class Game {
         this.configuration = new Configuration();
         this.resourceBank = new ResourceBank();
         this.gameStateExporter = new GameStateExporter();
+        this.commandManager = new CommandManager();
         this.random = new SecureRandom();
+        this.scanner = new Scanner(System.in);
     }
 
     public int getRound() {
         return round;
+    }
+
+    public void setScanner(Scanner scanner) {
+        this.scanner = scanner;
     }
 
     public Board getBoard() {
@@ -64,11 +99,21 @@ public class Game {
         return gameStateExporter;
     }
 
+    public Player getLongestRoadHolder() {
+        return longestRoadHolder;
+    }
+
+    public int getLongestRoadLength() {
+        return longestRoadLength;
+    }
+
     /**
      * Runs the full game until termination.
      */
     public void startGame() {
         LOGGER.info("=== Catan Simulation Started ===");
+        runSetupPhase();
+        setupComplete = true;
         while (!checkTermination()) {
             playRound();
             printRoundSummary();
@@ -84,6 +129,230 @@ public class Game {
     }
 
     /**
+     * Runs the Catan setup phase: snake order (0→1→2→…→N-1→N-1→…→1→0).
+     * Each player places exactly 1 settlement + 1 connected road per step.
+     * No rolling, no resource cost, no cities.
+     * On the return steps (second half), the placed settlement grants starting
+     * resources from each adjacent non-desert tile.
+     */
+    private void runSetupPhase() {
+        int n = players.size();
+        // Build snake order: forward 0..N-1 then backward N-1..0
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < n; i++)
+            order.add(i);
+        for (int i = n - 1; i >= 0; i--)
+            order.add(i);
+
+        LOGGER.log(Level.INFO, "=== Setup Phase (8 placement turns for {0} players) ===", n);
+
+        int totalSteps = order.size(); // 2*n
+        for (int step = 0; step < totalSteps; step++) {
+            int idx = order.get(step);
+            boolean isReturn = (step >= n); // Second half = return round
+            Player player = players.get(idx);
+            IAgent agent = agents.get(idx);
+
+            LOGGER.log(Level.INFO, "  Setup turn {0}/{1}: Player {2} ({3})",
+                    new Object[] { step + 1, totalSteps, player.getId(),
+                            isReturn ? "return" : "forward" });
+
+            doSetupTurn(agent, player, isReturn);
+            validateSetupState();
+            gameStateExporter.writeState(this);
+        }
+        LOGGER.info("=== Setup Phase Complete ===");
+    }
+
+    /**
+     * Strict backend verification that setup rules are not violated.
+     * Enforces max 2 settlements, max 2 roads, and 0 cities per player during
+     * setup.
+     */
+    private void validateSetupState() {
+        for (Player p : players) {
+            int settlements = 0;
+            int cities = 0;
+            for (Structure s : p.getStructures()) {
+                if (s instanceof Settlement)
+                    settlements++;
+                if (s instanceof City)
+                    cities++;
+            }
+            int roads = 0;
+            for (Edge e : board.getEdges()) {
+                if (e.getRoad() != null && e.getRoad().getOwner().getId() == p.getId()) {
+                    roads++;
+                }
+            }
+            if (settlements > 2 || roads > 2 || cities > 0) {
+                LOGGER.log(Level.SEVERE, "Setup State Validation Failed for Player {0}: " +
+                        "{1} Settlements, {2} Roads, {3} Cities",
+                        new Object[] { p.getId(), settlements, roads, cities });
+                throw new IllegalStateException("Setup phase limits exceeded for player " + p.getId());
+            }
+        }
+    }
+
+    /**
+     * One setup turn: place 1 settlement (free) then 1 road (free).
+     * On return turns, grant starting resources after the settlement.
+     */
+    private void doSetupTurn(IAgent agent, Player player, boolean isReturn) {
+        // --- Place settlement ---
+        Node chosen = pickSetupSettlement(agent, player);
+        if (chosen == null) {
+            LOGGER.log(Level.WARNING, "  Setup: Player {0} could not place a settlement.",
+                    player.getId());
+            return;
+        }
+        Settlement s = new Settlement(player, chosen);
+        player.addStructure(s);
+        LOGGER.log(Level.INFO, "    Player {0} placed settlement at node {1}",
+                new Object[] { player.getId(), chosen.getId() });
+
+        // --- Grant starting resources on return round ---
+        if (isReturn) {
+            grantStartingResources(player, chosen);
+        }
+
+        // --- Place road (must connect to the just-placed settlement) ---
+        Edge road = pickSetupRoad(agent, player, chosen);
+        if (road != null) {
+            road.setRoad(new Road(player, road));
+            LOGGER.log(Level.INFO, "    Player {0} placed road on edge {1}",
+                    new Object[] { player.getId(), road.getId() });
+            updateLongestRoad(player);
+        } else {
+            LOGGER.log(Level.WARNING, "  Setup: Player {0} could not place a road.",
+                    player.getId());
+        }
+    }
+
+    /**
+     * Picks the node for this player's setup settlement.
+     * For AI agents: first valid node per topology.
+     * For HumanAgent: prompts the console for "build settlement N".
+     */
+    private Node pickSetupSettlement(IAgent agent, Player player) {
+        if (agent instanceof HumanAgent) {
+            return pickSetupSettlementHuman(player);
+        }
+        // AI: pick first valid node
+        for (Node n : board.getNodes()) {
+            if (board.isValidSetupSettlementPlacement(n, player)) {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    private Node pickSetupSettlementHuman(Player player) {
+        LOGGER.log(Level.INFO, "[Setup] Player {0}: enter 'build settlement <nodeId>'",
+                player.getId());
+        while (scanner.hasNextLine()) {
+            String line = scanner.nextLine().trim();
+            String[] parts = line.split("\\s+");
+            if (parts.length >= 3
+                    && parts[0].equalsIgnoreCase("build")
+                    && parts[1].equalsIgnoreCase("settlement")) {
+                try {
+                    int id = Integer.parseInt(parts[2]);
+                    Node n = board.getNode(id);
+                    if (n != null && board.isValidSetupSettlementPlacement(n, player)) {
+                        return n;
+                    }
+                    LOGGER.log(Level.WARNING, "  Invalid node {0}. Try again.", id);
+                } catch (NumberFormatException e) {
+                    LOGGER.info("  Please enter a valid integer node ID.");
+                }
+            } else {
+                LOGGER.info("  Expected: build settlement <nodeId>");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Picks the edge for this player's setup road, which must connect to
+     * newSettlementNode.
+     * For AI: first adjacent unoccupied edge.
+     * For HumanAgent: prompts 'build road A B'.
+     */
+    private Edge pickSetupRoad(IAgent agent, Player player, Node settlementNode) {
+        if (agent instanceof HumanAgent) {
+            return pickSetupRoadHuman(player, settlementNode);
+        }
+        // AI: pick first adjacent unoccupied edge
+        for (Edge e : board.getAdjacentEdges(settlementNode)) {
+            if (e.getRoad() == null) {
+                return e;
+            }
+        }
+        return null;
+    }
+
+    private Edge pickSetupRoadHuman(Player player, Node settlementNode) {
+        LOGGER.log(Level.INFO,
+                "[Setup] Player {0}: enter 'build road <a> <b>' connecting to node {1}",
+                new Object[] { player.getId(), settlementNode.getId() });
+        while (scanner.hasNextLine()) {
+            String line = scanner.nextLine().trim();
+            String[] parts = line.split("\\s+");
+            if (parts.length >= 4
+                    && parts[0].equalsIgnoreCase("build")
+                    && parts[1].equalsIgnoreCase("road")) {
+                try {
+                    int a = Integer.parseInt(parts[2]);
+                    int b = Integer.parseInt(parts[3]);
+                    Edge e = findEdge(a, b);
+                    if (e != null && e.getRoad() == null
+                            && (e.getNodes().get(0).getId() == settlementNode.getId()
+                                    || e.getNodes().get(1).getId() == settlementNode.getId())) {
+                        return e;
+                    }
+                    LOGGER.log(Level.WARNING,
+                            "  Edge {0}-{1} invalid or not adjacent to your settlement. Try again.",
+                            new Object[] { a, b });
+                } catch (NumberFormatException ex) {
+                    LOGGER.info("  Please enter valid integer node IDs.");
+                }
+            } else {
+                LOGGER.info("  Expected: build road <a> <b>");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Grants 1 resource from each adjacent non-desert tile to the player.
+     * Called only on the second (return-round) settlement during setup.
+     */
+    private void grantStartingResources(Player player, Node node) {
+        for (Tile tile : board.getTiles()) {
+            if (tile.getResourceType() == ResourceType.WOOL
+                    && tile.getNumber() == 0)
+                continue; // Skip if desert (number 0)
+            // Skip any tile whose number is 0 (desert)
+            if (tile.getNumber() == 0)
+                continue;
+            for (Node tileNode : tile.getNodes()) {
+                if (tileNode.getId() == node.getId()) {
+                    // This tile is adjacent to the settlement
+                    if (resourceBank.hasResource(tile.getResourceType(), 1)) {
+                        resourceBank.takeResource(tile.getResourceType(), 1);
+                        player.getResourceHand().add(tile.getResourceType(), 1);
+                        LOGGER.log(Level.INFO,
+                                "    Starting resource: Player {0} gets 1 {1} from tile {2}",
+                                new Object[] { player.getId(), tile.getResourceType(), tile.getId() });
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
      * Plays a single round: each agent takes a turn following the automaton.
      * Roll → resolve robber if 7 → choose action.
      */
@@ -91,36 +360,234 @@ public class Game {
         round++;
         for (int i = 0; i < agents.size(); i++) {
             IAgent agent = agents.get(i);
-            Player player = players.get(i);
 
-            // If this is a HumanAgent, wait for "go" before the turn
-            if (agent instanceof HumanAgent humanAgent) {
-                humanAgent.waitForGo();
+            // R2.4: Step forward functionality
+            if (!(agent instanceof HumanAgent)) {
+                waitForGo();
             }
 
-            // Roll dice
+            processPlayerTurn(agent, players.get(i));
+            if (checkTermination()) {
+                return;
+            }
+        }
+    }
+
+    private void waitForGo() {
+        LOGGER.info(">>> [Step Forward] Press 'go' to proceed to next agent's turn <<<");
+        while (scanner.hasNextLine()) {
+            String input = scanner.nextLine().trim();
+            if (input.equalsIgnoreCase("go")) {
+                break;
+            }
+        }
+    }
+
+    private void processPlayerTurn(IAgent agent, Player player) {
+        TurnState turnState = new TurnState();
+        while (!turnState.isOver()) {
+            Action action = agent.takeTurn(this);
+            if (action == null) {
+                turnState.setOver(true);
+                continue;
+            }
+            executeGameAction(action, agent, player, turnState);
+            gameStateExporter.writeState(this);
+            if (checkTermination()) {
+                turnState.setOver(true);
+            }
+        }
+    }
+
+    private void executeGameAction(Action action, IAgent agent, Player player, TurnState turnState) {
+        switch (action.getActionType()) {
+            case PASS:
+                handlePassAction(action, agent, turnState);
+                break;
+            case ROLL:
+                handleRollAction(player, turnState);
+                break;
+            case LIST:
+                printList(player);
+                break;
+            case UNDO:
+                handleUndoAction();
+                break;
+            case REDO:
+                handleRedoAction();
+                break;
+            default:
+                handleBuildAndApplyAction(action, player, turnState);
+                break;
+        }
+    }
+
+    private void handleUndoAction() {
+        if (commandManager.undo()) {
+            LOGGER.info("  Action undone successfully.");
+        } else {
+            LOGGER.info("  Nothing to undo.");
+        }
+    }
+
+    private void handleRedoAction() {
+        if (commandManager.redo()) {
+            LOGGER.info("  Action redone successfully.");
+        } else {
+            LOGGER.info("  Nothing to redo.");
+        }
+    }
+
+    private void handlePassAction(Action action, IAgent agent, TurnState turnState) {
+        turnState.setOver(true);
+        if (agent instanceof Agent) {
+            LOGGER.log(Level.INFO, "  {0}", action);
+        }
+    }
+
+    private void handleRollAction(Player player, TurnState turnState) {
+        if (!turnState.hasRolled()) {
             int diceRoll = rollDiceForPlayer();
             LOGGER.log(Level.INFO, "Player {0} rolled: {1}", new Object[] { player.getId(), diceRoll });
-
-            // Resolve roll
             distributeResources(diceRoll);
-
-            // Robber check
             if (diceRoll == 7) {
                 resolveRobber(player);
             }
-
-            // Agent chooses and returns an action
-            Action action = agent.takeTurn(round, board, resourceBank);
-            LOGGER.log(Level.INFO, "  {0}", action);
-
-            if (action != null) {
-                applyAction(action, player);
-            }
-
-            // Overwrite state.json after each turn/action (per user request)
-            gameStateExporter.writeState(this);
+            turnState.setHasRolled(true);
+        } else {
+            LOGGER.log(Level.INFO, "  Already rolled this turn.");
         }
+    }
+
+    private void handleBuildAndApplyAction(Action action, Player player, TurnState turnState) {
+        LOGGER.log(Level.INFO, "  {0}", action);
+        if (turnState.hasRolled()) {
+            // Final legality guard: reject illegal AI actions before they are applied or
+            // exported.
+            if (!isLegalAction(action, player)) {
+                LOGGER.log(Level.WARNING,
+                        "  [LEGALITY GUARD] AI action rejected as illegal (not applied, not exported): {0}",
+                        action);
+                turnState.setOver(true); // treat as implicit PASS
+                return;
+            }
+            applyAction(action, player);
+        } else {
+            LOGGER.log(Level.INFO, "  You must roll first!");
+        }
+    }
+
+    /**
+     * Pre-validates an action without applying it.
+     * During normal play (after setup) also checks that the player can afford the
+     * build.
+     * Used as a defensive legality guard so illegal AI proposals never reach
+     * applyAction() or the state exporter.
+     */
+    private boolean isLegalAction(Action action, Player player) {
+        if (action == null || action.getActionType() == null)
+            return false;
+        switch (action.getActionType()) {
+            case BUILD_SETTLEMENT: {
+                // After setup, require resources
+                if (setupComplete && !player.getResourceHand().canAfford(SETTLEMENT_COST))
+                    return false;
+                String[] parts = action.getDescription().split(" ");
+                if (parts.length < 2)
+                    return false;
+                try {
+                    int nodeId = Integer.parseInt(parts[1]);
+                    Node n = board.getNode(nodeId);
+                    return n != null && board.isValidSettlementPlacement(n, player);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            case BUILD_CITY: {
+                // Cities are always post-setup; require resources + existing settlement
+                if (!player.getResourceHand().canAfford(CITY_COST))
+                    return false;
+                String[] parts = action.getDescription().split(" ");
+                if (parts.length < 2)
+                    return false;
+                try {
+                    int nodeId = Integer.parseInt(parts[1]);
+                    Node n = board.getNode(nodeId);
+                    return n != null && board.isValidCityPlacement(n, player);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            case BUILD_ROAD: {
+                // After setup, require resources
+                if (setupComplete && !player.getResourceHand().canAfford(ROAD_COST))
+                    return false;
+                String[] parts = action.getDescription().split(" ");
+                if (parts.length < 3)
+                    return false;
+                try {
+                    int fromId = Integer.parseInt(parts[1]);
+                    int toId = Integer.parseInt(parts[2]);
+                    Edge e = findEdge(fromId, toId);
+                    return e != null && e.getRoad() == null && board.isValidRoadPlacement(e, player);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            default:
+                return true; // ROLL, PASS, LIST, UNDO, REDO always allowed at this point
+        }
+    }
+
+    /**
+     * Helper to track turn state (rolled, over).
+     */
+    private static class TurnState {
+        private boolean hasRolled = false;
+        private boolean over = false;
+
+        public boolean hasRolled() {
+            return hasRolled;
+        }
+
+        public void setHasRolled(boolean rolled) {
+            this.hasRolled = rolled;
+        }
+
+        public boolean isOver() {
+            return over;
+        }
+
+        public void setOver(boolean over) {
+            this.over = over;
+        }
+    }
+
+    private void printList(Player player) {
+        LOGGER.info("--- Legal Build Targets (IDs refer to Node intersections, NOT tile numbers) ---");
+
+        List<Integer> validSettlements = new ArrayList<>();
+        List<Integer> validCities = new ArrayList<>();
+        for (Node n : board.getNodes()) {
+            if (board.isValidSettlementPlacement(n, player)) {
+                validSettlements.add(n.getId());
+            }
+            if (board.isValidCityPlacement(n, player)) {
+                validCities.add(n.getId());
+            }
+        }
+
+        List<String> validRoads = new ArrayList<>();
+        for (Edge e : board.getEdges()) {
+            if (board.isValidRoadPlacement(e, player) && e.getNodes().size() == 2) {
+                validRoads.add(String.format("%d-%d", e.getNodes().get(0).getId(), e.getNodes().get(1).getId()));
+            }
+        }
+
+        LOGGER.log(Level.INFO, "Settlement placements: {0}", validSettlements);
+        LOGGER.log(Level.INFO, "City upgrades: {0}", validCities);
+        LOGGER.log(Level.INFO, "Road placements (from-to): {0}", validRoads);
+        LOGGER.info("-------------------------------------------------------------------------");
     }
 
     /**
@@ -130,7 +597,7 @@ public class Game {
      * placement.
      */
     private void applyAction(Action action, Player player) {
-        if (action.getActionType() == null)
+        if (action == null || action.getActionType() == null)
             return;
 
         switch (action.getActionType()) {
@@ -151,25 +618,28 @@ public class Game {
     private void handleBuildSettlement(Action action, Player player) {
         try {
             String[] parts = action.getDescription().split(" ");
+            Node targetNode = null;
             if (parts.length > 1) {
                 int nodeId = Integer.parseInt(parts[1]);
                 Node n = board.getNode(nodeId);
                 if (n != null && board.isValidSettlementPlacement(n, player)) {
-                    Settlement s = new Settlement(player, n);
-                    player.addStructure(s);
-                    LOGGER.log(Level.INFO, "    Successfully built Settlement at node {0}", nodeId);
+                    targetNode = n;
                 } else {
                     LOGGER.log(Level.INFO, "    Failed: Invalid settlement placement at node {0}", nodeId);
                 }
             } else {
                 for (Node n : board.getNodes()) {
                     if (board.isValidSettlementPlacement(n, player)) {
-                        Settlement s = new Settlement(player, n);
-                        player.addStructure(s);
-                        LOGGER.log(Level.INFO, "    AI successfully built Settlement at node {0}", n.getId());
+                        targetNode = n;
                         break;
                     }
                 }
+            }
+
+            if (targetNode != null) {
+                GameCommand cmd = new BuildSettlementCommand(player, targetNode, resourceBank);
+                commandManager.executeCommand(cmd);
+                LOGGER.log(Level.INFO, "    Successfully built Settlement at node {0}", targetNode.getId());
             }
         } catch (NumberFormatException e) {
             LOGGER.log(Level.SEVERE, "Failed to parse node ID for settlement", e);
@@ -179,29 +649,28 @@ public class Game {
     private void handleBuildCity(Action action, Player player) {
         try {
             String[] parts = action.getDescription().split(" ");
+            Node targetNode = null;
             if (parts.length > 1) {
                 int nodeId = Integer.parseInt(parts[1]);
                 Node n = board.getNode(nodeId);
                 if (n != null && board.isValidCityPlacement(n, player)) {
-                    City c = new City(player, n);
-                    player.getStructures()
-                            .removeIf(st -> st.getLocation() != null && st.getLocation().getId() == nodeId);
-                    player.addStructure(c);
-                    LOGGER.log(Level.INFO, "    Successfully built City at node {0}", nodeId);
+                    targetNode = n;
                 } else {
                     LOGGER.log(Level.INFO, "    Failed: Invalid city placement at node {0}", nodeId);
                 }
             } else {
                 for (Node n : board.getNodes()) {
                     if (board.isValidCityPlacement(n, player)) {
-                        City c = new City(player, n);
-                        player.getStructures()
-                                .removeIf(st -> st.getLocation() != null && st.getLocation().getId() == n.getId());
-                        player.addStructure(c);
-                        LOGGER.log(Level.INFO, "    AI successfully built City at node {0}", n.getId());
+                        targetNode = n;
                         break;
                     }
                 }
+            }
+
+            if (targetNode != null) {
+                GameCommand cmd = new BuildCityCommand(player, targetNode, resourceBank);
+                commandManager.executeCommand(cmd);
+                LOGGER.log(Level.INFO, "    Successfully built City at node {0}", targetNode.getId());
             }
         } catch (NumberFormatException e) {
             LOGGER.log(Level.SEVERE, "Failed to parse node ID for city", e);
@@ -211,29 +680,62 @@ public class Game {
     private void handleBuildRoad(Action action, Player player) {
         try {
             String[] parts = action.getDescription().split(" ");
+            Edge targetEdge = null;
             if (parts.length > 2) {
                 int fromId = Integer.parseInt(parts[1]);
                 int toId = Integer.parseInt(parts[2]);
-                Edge targetEdge = findEdge(fromId, toId);
-                if (targetEdge != null && board.isValidRoadPlacement(targetEdge, player)) {
-                    Road r = new Road(player, targetEdge);
-                    targetEdge.setRoad(r);
-                    LOGGER.info(() -> String.format("    Successfully built Road from %d to %d", fromId, toId));
+                Edge target = findEdge(fromId, toId);
+                if (target == null) {
+                    LOGGER.info(
+                            () -> String.format("    Failed: No edge exists between nodes %d and %d", fromId, toId));
+                } else if (target.getRoad() != null) {
+                    LOGGER.info(() -> String.format("    Failed: Edge %d-%d already has a road", fromId, toId));
+                } else if (!board.isValidRoadPlacement(target, player)) {
+                    LOGGER.info(() -> String.format(
+                            "    Failed: Road at %d-%d must connect to your building or road (and not be blocked)",
+                            fromId, toId));
                 } else {
-                    LOGGER.info(() -> String.format("    Failed: Invalid road placement from %d to %d", fromId, toId));
+                    targetEdge = target;
                 }
             } else {
                 for (Edge e : board.getEdges()) {
                     if (board.isValidRoadPlacement(e, player)) {
-                        Road r = new Road(player, e);
-                        e.setRoad(r);
-                        LOGGER.log(Level.INFO, "    AI successfully built Road on edge {0}", e.getId());
+                        targetEdge = e;
                         break;
                     }
                 }
             }
+            if (targetEdge != null) {
+                final Edge finalEdge = targetEdge;
+                GameCommand cmd = new BuildRoadCommand(player, finalEdge, resourceBank);
+                commandManager.executeCommand(cmd);
+                LOGGER.info(() -> String.format("    Successfully built Road on edge %d", finalEdge.getId()));
+                updateLongestRoad(player);
+            }
         } catch (NumberFormatException e) {
-            LOGGER.log(Level.SEVERE, "Failed to parse node IDs for road", e);
+            LOGGER.log(Level.SEVERE, "Failed to parse edge/node IDs for road", e);
+        }
+    }
+
+    /**
+     * Re-evaluates the Longest Road for the given player.
+     * Transfers the (+2 VP) bonus if their new simple path length strictly exceeds
+     * the current record.
+     */
+    public void updateLongestRoad(Player player) {
+        int length = board.getLongestRoadLength(player);
+        if (length > longestRoadLength) {
+            if (longestRoadHolder != null && longestRoadHolder.getId() != player.getId()) {
+                longestRoadHolder.addVictoryPoints(-2);
+                LOGGER.log(Level.INFO, "Player {0} lost Longest Road (-2 VP)", longestRoadHolder.getId());
+            }
+            if (longestRoadHolder == null || longestRoadHolder.getId() != player.getId()) {
+                player.addVictoryPoints(2);
+                longestRoadHolder = player;
+                LOGGER.log(Level.INFO, "Player {0} gained Longest Road (+2 VP) with length {1}",
+                        new Object[] { player.getId(), length });
+            }
+            longestRoadLength = length;
         }
     }
 
@@ -268,10 +770,10 @@ public class Game {
     }
 
     private void processTileResources(Tile tile) {
-        for (Node node : board.getNodes()) {
+        for (Node node : tile.getNodes()) {
             if (node.getStructure() != null) {
                 Player owner = node.getStructure().getOwner();
-                int amount = node.getStructure().getVictoryPoints();
+                int amount = (node.getStructure() instanceof City) ? 2 : 1;
                 if (resourceBank.hasResource(tile.getResourceType(), amount)) {
                     resourceBank.takeResource(tile.getResourceType(), amount);
                     owner.getResourceHand().add(tile.getResourceType(), amount);
@@ -298,14 +800,22 @@ public class Game {
             Tile target = tiles.get(random.nextInt(tiles.size()));
             board.getRobber().move(target);
             LOGGER.log(Level.INFO, "  Robber moved to tile {0}", target.getId());
+            stealFromAdjacentPlayer(target, roller);
         }
+    }
 
+    private void stealFromAdjacentPlayer(Tile target, Player roller) {
         List<Player> stealCandidates = new ArrayList<>();
-        for (Player p : players) {
-            if (p.getId() != roller.getId() && p.getResourceHand().getTotalCards() > 0) {
-                stealCandidates.add(p);
+        for (Node n : target.getNodes()) {
+            if (n.getStructure() != null) {
+                Player victim = n.getStructure().getOwner();
+                if (victim.getId() != roller.getId() && victim.getResourceHand().getTotalCards() > 0
+                        && !stealCandidates.contains(victim)) {
+                    stealCandidates.add(victim);
+                }
             }
         }
+
         if (!stealCandidates.isEmpty()) {
             Player victim = stealCandidates.get(random.nextInt(stealCandidates.size()));
             ResourceType stolenType = getRandomOwnedResource(victim);

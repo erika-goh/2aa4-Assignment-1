@@ -25,6 +25,13 @@ tmp/
 *.bak
 *.swp
 
-# --- PDFs --
+# --- Artifacts & Simulation Results ---
 *.pdf
+*.log
 
+# --- Game Simulation State ---
+# Note: These files are now exported to the visualizer directory
+# but we ignore them here just in case they are generated locally.
+base_map.json
+state.json
+scraped_boards/

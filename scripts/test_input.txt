@@ -1,0 +1,10 @@
+build settlement 13
+build settlement 14
+build settlement 15
+build road 15 14
+build road 14 13
+build road 13 34
+pass
+pass
+pass
+pass

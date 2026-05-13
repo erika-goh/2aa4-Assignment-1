@@ -58,9 +58,31 @@ public class Board {
     // ---- Placement legality ----
 
     /**
-     * A settlement can be placed on a node if:
+     * A settlement can be placed on a node during the SETUP PHASE if:
      * 1. The node has no existing structure.
      * 2. No adjacent node already has a structure (distance rule).
+     * Connection to existing roads is NOT required during setup.
+     */
+    public boolean isValidSetupSettlementPlacement(Node node, Player player) {
+        if (node == null || player == null) {
+            return false;
+        }
+        if (node.getStructure() != null) {
+            return false;
+        }
+        for (Node adj : getAdjacentNodes(node)) {
+            if (adj.getStructure() != null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * A settlement can be placed on a node during NORMAL PLAY if:
+     * 1. The node has no existing structure.
+     * 2. No adjacent node already has a structure (distance rule).
+     * 3. The player has a connecting road.
      */
     public boolean isValidSettlementPlacement(Node node, Player player) {
         if (node == null || player == null) {
@@ -77,20 +99,17 @@ public class Board {
                 return false;
             }
         }
-        // Must have a connecting road owned by this player (unless it is the
-        // setup phase, which we approximate by checking if the player has no structures)
-        if (!player.getStructures().isEmpty()) {
-            boolean hasConnectingRoad = false;
-            List<Edge> adjEdges = getAdjacentEdges(node);
-            for (Edge e : adjEdges) {
-                if (e.getRoad() != null && e.getRoad().getOwner().getId() == player.getId()) {
-                    hasConnectingRoad = true;
-                    break;
-                }
+        // Normal play: must have a connecting road owned by this player
+        boolean hasConnectingRoad = false;
+        List<Edge> adjEdges = getAdjacentEdges(node);
+        for (Edge e : adjEdges) {
+            if (e.getRoad() != null && e.getRoad().getOwner().getId() == player.getId()) {
+                hasConnectingRoad = true;
+                break;
             }
-            if (!hasConnectingRoad) {
-                return false;
-            }
+        }
+        if (!hasConnectingRoad) {
+            return false;
         }
         return true;
     }
@@ -101,27 +120,40 @@ public class Board {
      * 2. The player has a structure or road connected to one end.
      */
     public boolean isValidRoadPlacement(Edge edge, Player player) {
-        if (edge == null || player == null) {
+        if (edge == null || player == null || edge.getRoad() != null) {
             return false;
         }
-        // Edge must be empty
-        if (edge.getRoad() != null) {
-            return false;
-        }
-        // Must connect to a structure or existing road owned by the player
+        return canConnectToNetwork(edge, player);
+    }
+
+    private boolean canConnectToNetwork(Edge edge, Player player) {
         for (Node n : edge.getNodes()) {
-            // Connected structure owned by this player?
-            if (n.getStructure() != null
-                    && n.getStructure().getOwner().getId() == player.getId()) {
+            // Friendly building always allows a road
+            if (isFriendlyStructureAt(n, player)) {
                 return true;
             }
-            // Connected road owned by this player?
-            List<Edge> adjEdges = getAdjacentEdges(n);
-            for (Edge adj : adjEdges) {
-                if (adj != edge && adj.getRoad() != null
-                        && adj.getRoad().getOwner().getId() == player.getId()) {
-                    return true;
-                }
+            // Friendly road allows extension, unless blocked by enemy
+            if (!isBlockedByEnemy(n, player) && hasFriendlyConnectingRoad(edge, n, player)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isFriendlyStructureAt(Node node, Player player) {
+        return node.getStructure() != null && node.getStructure().getOwner().getId() == player.getId();
+    }
+
+    private boolean isBlockedByEnemy(Node node, Player player) {
+        return node.getStructure() != null && node.getStructure().getOwner().getId() != player.getId();
+    }
+
+    private boolean hasFriendlyConnectingRoad(Edge targetEdge, Node node, Player player) {
+        List<Edge> adjEdges = getAdjacentEdges(node);
+        for (Edge adj : adjEdges) {
+            if (adj.getId() != targetEdge.getId() && adj.getRoad() != null
+                    && adj.getRoad().getOwner().getId() == player.getId()) {
+                return true;
             }
         }
         return false;
@@ -183,7 +215,7 @@ public class Board {
     /**
      * Returns true if any adjacent node has a structure (used for distance rule).
      */
-    public boolean hasAdjacentStructures(Node node, Player player) {
+    public boolean hasAdjacentStructures(Node node) {
         List<Node> adjacent = getAdjacentNodes(node);
         for (Node adj : adjacent) {
             if (adj.getStructure() != null) {
@@ -191,6 +223,79 @@ public class Board {
             }
         }
         return false;
+    }
+
+    // ---- R3.3 Topology Helpers ----
+
+    /**
+     * Returns the length of the longest continuous road for the given player.
+     * Practical implementation: finds the longest simple path in the road graph.
+     */
+    public int getLongestRoadLength(Player player) {
+        int maxLength = 0;
+        List<Edge> playerRoads = getPlayerRoads(player);
+        for (Edge start : playerRoads) {
+            maxLength = Math.max(maxLength, findLongestPathFrom(start, player, new ArrayList<>()));
+        }
+        return maxLength;
+    }
+
+    private int findLongestPathFrom(Edge current, Player player, List<Edge> visited) {
+        visited.add(current);
+        int maxNested = 0;
+        for (Node n : current.getNodes()) {
+            if (isBlockedByEnemy(n, player)) continue;
+            List<Edge> adjEdges = getAdjacentEdges(n);
+            for (Edge next : adjEdges) {
+                if (!visited.contains(next) && next.getRoad() != null && next.getRoad().getOwner().getId() == player.getId()) {
+                    maxNested = Math.max(maxNested, findLongestPathFrom(next, player, new ArrayList<>(visited)));
+                }
+            }
+        }
+        return 1 + maxNested;
+    }
+
+    private List<Edge> getPlayerRoads(Player player) {
+        List<Edge> playerRoads = new ArrayList<>();
+        for (Edge e : edges) {
+            if (e.getRoad() != null && e.getRoad().getOwner().getId() == player.getId()) {
+                playerRoads.add(e);
+            }
+        }
+        return playerRoads;
+    }
+
+    /**
+     * Checks if there are two road segments within two units of each other that could be connected.
+     * Returns a candidate edge to build a road on if it helps connect them.
+     */
+    public Edge getConnectingRoadCandidate(Player player) {
+        // R3.3: Max two units away means one intermediate road could connect two segments 
+        // OR two intermediate roads. 
+        // Simplification: find a legal road placement that connects to a node which is 1-edge 
+        // away from another disconnected segment.
+        List<Edge> playerRoads = getPlayerRoads(player);
+        if (playerRoads.size() < 2) return null;
+
+        for (Edge e : edges) {
+            if (isValidRoadPlacement(e, player)) {
+                // If we place a road here, does it touch another road segment that was previously disconnected?
+                // For simplicity: check if the OTHER node of this edge is adjacent to a different road segment.
+                for (Node n : e.getNodes()) {
+                    if (hasFriendlyConnectingRoad(e, n, player)) continue; // Already connected at this end
+                    
+                    // Check if this node is 1 unit away from another player road
+                    List<Edge> neighbors = getAdjacentEdges(n);
+                    for (Edge neigh : neighbors) {
+                        if (neigh.getId() != e.getId() && neigh.getRoad() != null && neigh.getRoad().getOwner().getId() == player.getId()) {
+                            // This edge e, if built, would connect current network to 'neigh'.
+                            return e; 
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     // ---- Accessors ----
@@ -210,4 +315,5 @@ public class Board {
     public Robber getRobber() {
         return robber;
     }
+
 }

@@ -33,6 +33,10 @@ public class Player {
         return victoryPoints;
     }
 
+    public void addVictoryPoints(int vp) {
+        this.victoryPoints += vp;
+    }
+
     public ResourceHand getResourceHand() {
         return resourceHand;
     }
@@ -50,6 +54,18 @@ public class Player {
         // Also place the structure on its node
         if (s.getLocation() != null) {
             s.getLocation().setStructure(s);
+        }
+    }
+
+    /**
+     * Removes a structure and updates victory points accordingly.
+     */
+    public void removeStructure(Structure s) {
+        if (structures.remove(s)) {
+            victoryPoints -= s.getVictoryPoints();
+            if (s.getLocation() != null && s.getLocation().getStructure() == s) {
+                s.getLocation().setStructure(null);
+            }
         }
     }
 

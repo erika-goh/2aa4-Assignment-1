@@ -49,11 +49,13 @@ public class HumanAgent implements IAgent {
      * 3. Return the resulting Action
      */
     @Override
-    public Action takeTurn(int roundNumber, Board board, ResourceBank resourceBank) {
+    public Action takeTurn(Game game) {
+        int roundNumber = game.getRound();
         LOGGER.log(Level.INFO, "\n=== Player {0}''s turn (Round {1}) ===",
                 new Object[] { player.getId(), roundNumber });
-        LOGGER.log(Level.INFO, "Your resources: {0}", player.getResourceHand().getResources());
-        LOGGER.info("Commands: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
+        LOGGER.log(Level.INFO, "Your resources: {0} (Total VP: {1})", 
+                new Object[] { player.getResourceHand().getResources(), player.getVictoryPoints() });
+        LOGGER.info("Commands: roll, list, build settlement <nodeId>, build city <nodeId>, build road <fromNodeId> <toNodeId>, pass");
 
         while (true) {
             LOGGER.info("> ");
@@ -73,27 +75,10 @@ public class HumanAgent implements IAgent {
                 return new Action(roundNumber, player.getId(), action.getDescription(), action.getActionType());
             } else {
                 LOGGER.info(
-                        "Invalid command. Try: roll, list, build settlement <id>, build city <id>, build road <from> <to>");
+                        "Invalid command. Try: roll, list, build settlement <nodeId>, build city <nodeId>, build road <from> <to>, pass");
             }
         }
     }
 
-    /**
-     * Step-forward control: blocks until the user types "go".
-     * This is NOT a gameplay action — it is flow control for the simulator.
-     */
-    public void waitForGo() {
-        LOGGER.info("Type 'go' to proceed to the next step.");
-        while (true) {
-            LOGGER.info(">> ");
-            if (!scanner.hasNextLine()) {
-                return;
-            }
-            String input = scanner.nextLine().trim();
-            if (input.equalsIgnoreCase("go")) {
-                return;
-            }
-            LOGGER.info("Type 'go' to continue.");
-        }
-    }
+    // Removed waitForGo as it is now naturally handled by the command loop.
 }

@@ -27,6 +27,7 @@ public class Demonstrator {
         // --- Build the board ---
         List<Tile> tiles = createTiles();
         List<Node> nodes = createNodes();
+        mapNodesToTiles(tiles, nodes);
         List<Edge> edges = createEdges(nodes);
         Board board = new Board(tiles, nodes, edges);
 
@@ -39,9 +40,10 @@ public class Demonstrator {
 
         // --- Create agents: 3 AI + 1 Human ---
         List<IAgent> agents = new ArrayList<>();
-        agents.add(new Agent(p1)); // AI
-        agents.add(new Agent(p2)); // AI
-        agents.add(new Agent(p3)); // AI
+        DecisionStrategy ruleStrategy = new RuleBasedDecisionStrategy();
+        agents.add(new Agent(p1, ruleStrategy)); // AI with Rule-Based Strategy
+        agents.add(new Agent(p2, ruleStrategy)); // AI with Rule-Based Strategy
+        agents.add(new Agent(p3, ruleStrategy)); // AI with Rule-Based Strategy
         agents.add(new HumanAgent(p4)); // Human (Player 4)
 
         // --- Create and start the game ---
@@ -49,8 +51,12 @@ public class Demonstrator {
         LOGGER.log(Level.INFO, "Game created with {0} players.", players.size());
         LOGGER.info("Player 4 is the human player.\n");
 
-        // Write the base map once before starting the game
+        // Write the base map and initial state before starting the game
         game.getGameStateExporter().writeBaseMap(board);
+        game.getGameStateExporter().writeState(game);
+
+        // Seed initial state // R3.1 setup scenario
+        setupVerificationScenario();
 
         // Run the simulation
         game.startGame();
@@ -67,6 +73,14 @@ public class Demonstrator {
         LOGGER.info("Done.");
     }
 
+    private static void setupVerificationScenario() {
+        LOGGER.info(">>> Regular Setup sequence initializing (no pre-seeded Verification Scenario) <<<");
+        // We will no longer seed any early structures or resources here,
+        // so that the 8-step Setup Phase correctly builds from zero.
+    }
+
+    // findEdge method removed as it is no longer used by the verification scenario.
+
     private static void launchVisualizer() {
         LOGGER.info("Attempting to launch Python Visualizer...");
         try {
@@ -79,10 +93,13 @@ public class Demonstrator {
             }
 
             ProcessBuilder pb = new ProcessBuilder(
-                    "python",
+                    "../2aa4-2026-base/assignments/visualize/.venv/bin/python3",
                     visFile.getAbsolutePath(),
                     "base_map.json",
-                    "state.json");
+                    "state.json",
+                    "--out-dir",
+                    "scraped_boards");
+            pb.directory(visFile.getParentFile());
             pb.inheritIO(); // Pipe python output to java console
             Process process = pb.start();
             process.waitFor();
@@ -97,9 +114,48 @@ public class Demonstrator {
     // ---- Board Setup Helpers ----
 
     /**
+     * Maps the 6 encompassing nodes for each of the 19 tiles.
+     */
+    public static void mapNodesToTiles(List<Tile> tiles, List<Node> nodes) {
+        // Standard Catan node-to-tile mapping (topology dependent)
+        int[][] mapping = {
+                { 0, 1, 2, 3, 4, 5 }, // Tile 0
+                { 1, 2, 6, 23, 22, 21 }, // Tile 1
+                { 2, 3, 9, 8, 7, 6 }, // Tile 2
+                { 3, 4, 12, 11, 10, 9 }, // Tile 3
+                { 4, 5, 13, 14, 11, 12 }, // Tile 4
+                { 0, 5, 13, 15, 18, 17 }, // Tile 5
+                { 0, 1, 21, 20, 19, 17 }, // Tile 6
+                { 15, 18, 38, 39, 36, 35 }, // Tile 7
+                { 5, 13, 15, 35, 34, 14 }, // Tile 8
+                { 11, 12, 14, 34, 33, 32 }, // Tile 9
+                { 10, 11, 32, 31, 30, 29 }, // Tile 10
+                { 8, 9, 10, 29, 28, 27 }, // Tile 11
+                { 7, 8, 27, 26, 25, 24 }, // Tile 12
+                { 6, 7, 24, 23, 52, 53 }, // Tile 13
+                { 22, 23, 52, 51, 50, 49 }, // Tile 14
+                { 21, 22, 49, 48, 47, 20 }, // Tile 15
+                { 19, 20, 47, 46, 45, 44 }, // Tile 16
+                { 16, 17, 19, 44, 43, 41 }, // Tile 17
+                { 16, 18, 38, 42, 40, 41 } // Tile 18
+        };
+
+        for (int i = 0; i < mapping.length && i < tiles.size(); i++) {
+            Tile t = tiles.get(i);
+            for (int nodeId : mapping[i]) {
+                for (Node n : nodes) {
+                    if (n.getId() == nodeId) {
+                        t.addNode(n);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Creates the 19 standard Catan hex tiles.
      */
-    private static List<Tile> createTiles() {
+    public static List<Tile> createTiles() {
         List<Tile> tiles = new ArrayList<>();
         ResourceType[] types = {
                 ResourceType.LUMBER, ResourceType.WOOL, ResourceType.GRAIN,
@@ -113,7 +169,7 @@ public class Demonstrator {
         int[] numbers = { 2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12, 0 };
 
         for (int i = 0; i < types.length; i++) {
-            tiles.add(new Tile(i + 1, types[i], numbers[i]));
+            tiles.add(new Tile(i, types[i], numbers[i]));
         }
         return tiles;
     }
@@ -121,9 +177,9 @@ public class Demonstrator {
     /**
      * Creates 54 nodes (standard Catan board intersections).
      */
-    private static List<Node> createNodes() {
+    public static List<Node> createNodes() {
         List<Node> nodes = new ArrayList<>();
-        for (int i = 1; i <= 54; i++) {
+        for (int i = 0; i <= 53; i++) {
             nodes.add(new Node(i));
         }
         return nodes;
@@ -133,27 +189,25 @@ public class Demonstrator {
      * Creates 72 edges connecting adjacent nodes.
      * Simplified connectivity for demonstration.
      */
-    private static List<Edge> createEdges(List<Node> nodes) {
+    public static List<Edge> createEdges(List<Node> nodes) {
         List<Edge> edges = new ArrayList<>();
-        // Create edges connecting sequential node pairs (simplified topology)
+        // Create edges connecting using accurately mapped topology
         int[][] connections = {
-                { 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 5 }, { 5, 6 }, { 6, 7 },
-                { 7, 8 }, { 8, 9 }, { 9, 10 }, { 10, 11 }, { 11, 12 }, { 12, 13 },
-                { 13, 14 }, { 14, 15 }, { 15, 16 }, { 16, 17 }, { 17, 18 },
-                { 1, 9 }, { 2, 10 }, { 3, 11 }, { 4, 12 }, { 5, 13 }, { 6, 14 },
-                { 8, 17 }, { 9, 18 }, { 10, 19 }, { 11, 20 }, { 12, 21 }, { 13, 22 },
-                { 15, 24 }, { 16, 25 }, { 17, 26 }, { 18, 27 }, { 19, 28 }, { 20, 29 },
-                { 22, 31 }, { 23, 32 }, { 24, 33 }, { 25, 34 }, { 26, 35 }, { 27, 36 },
-                { 28, 37 }, { 29, 38 }, { 30, 39 }, { 31, 40 }, { 32, 41 }, { 33, 42 },
-                { 34, 43 }, { 35, 44 }, { 36, 45 }, { 37, 46 }, { 38, 47 }, { 39, 48 },
-                { 40, 49 }, { 41, 50 }, { 42, 51 }, { 43, 52 }, { 44, 53 }, { 45, 54 },
-                { 46, 47 }, { 47, 48 }, { 48, 49 }, { 49, 50 }, { 50, 51 }, { 51, 52 },
-                { 52, 53 }, { 53, 54 },
-                { 7, 18 }, { 14, 23 }, { 21, 30 }, { 19, 8 }, { 20, 9 }
+                { 0, 1 }, { 0, 5 }, { 0, 20 }, { 1, 2 }, { 1, 6 }, { 2, 3 }, { 2, 9 }, { 3, 4 }, { 3, 12 },
+                { 4, 5 }, { 4, 15 }, { 5, 16 }, { 6, 7 }, { 6, 23 }, { 7, 8 }, { 7, 24 }, { 8, 9 }, { 8, 27 },
+                { 9, 10 }, { 10, 11 }, { 10, 29 }, { 11, 12 }, { 11, 32 }, { 12, 13 }, { 13, 14 }, { 13, 34 },
+                { 14, 15 }, { 14, 37 }, { 15, 17 }, { 16, 5 }, { 16, 18 }, { 16, 21 }, { 17, 39 }, { 17, 18 },
+                { 18, 40 },
+                { 19, 20 }, { 19, 46 }, { 19, 21 }, { 20, 0 }, { 20, 22 }, { 21, 43 }, { 22, 23 }, { 22, 49 },
+                { 23, 52 },
+                { 24, 25 }, { 24, 53 }, { 25, 26 }, { 26, 27 }, { 27, 28 }, { 28, 29 }, { 29, 30 }, { 30, 31 },
+                { 31, 32 }, { 32, 33 }, { 33, 34 }, { 34, 36 }, { 35, 37 }, { 35, 39 }, { 36, 37 }, { 38, 39 },
+                { 38, 42 }, { 40, 41 }, { 40, 42 }, { 41, 43 }, { 43, 44 }, { 44, 45 }, { 45, 46 }, { 46, 47 },
+                { 47, 48 }, { 48, 49 }, { 49, 50 }, { 50, 51 }, { 51, 52 }, { 52, 53 }
         };
 
         for (int i = 0; i < connections.length; i++) {
-            Edge e = new Edge(i + 1);
+            Edge e = new Edge(i);
             int fromId = connections[i][0];
             int toId = connections[i][1];
             // Find nodes by ID

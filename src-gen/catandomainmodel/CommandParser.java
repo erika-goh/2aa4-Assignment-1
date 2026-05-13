@@ -13,25 +13,27 @@ import java.util.regex.Pattern;
  * Responsibility: parsing only — no game logic.
  *
  * Supported commands (case-insensitive):
- *   roll
- *   list
- *   build settlement <nodeId>
- *   build city <nodeId>
- *   build road <fromNodeId> <toNodeId>
+ * roll
+ * list
+ * build settlement <nodeId>
+ * build city <nodeId>
+ * build road <fromNodeId> <toNodeId>
+ * pass
  */
 public class CommandParser {
 
     // Patterns compiled once for performance
-    private static final Pattern ROLL_PATTERN =
-            Pattern.compile("^\\s*roll\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LIST_PATTERN =
-            Pattern.compile("^\\s*list\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BUILD_SETTLEMENT_PATTERN =
-            Pattern.compile("^\\s*build\\s+settlement\\s+(\\d+)\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BUILD_CITY_PATTERN =
-            Pattern.compile("^\\s*build\\s+city\\s+(\\d+)\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BUILD_ROAD_PATTERN =
-            Pattern.compile("^\\s*build\\s+road\\s+(\\d+)\\s+(\\d+)\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ROLL_PATTERN = Pattern.compile("^\\s*roll\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern LIST_PATTERN = Pattern.compile("^\\s*list\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PASS_PATTERN = Pattern.compile("^\\s*(pass|go)\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BUILD_SETTLEMENT_PATTERN = Pattern.compile("^\\s*build\\s+settlement\\s+(\\d+)\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern BUILD_CITY_PATTERN = Pattern.compile("^\\s*build\\s+city\\s+(\\d+)\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern BUILD_ROAD_PATTERN = Pattern.compile("^\\s*build\\s+road\\s+(\\d+)\\s+(\\d+)\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern UNDO_PATTERN = Pattern.compile("^\\s*undo\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern REDO_PATTERN = Pattern.compile("^\\s*redo\\s*$", Pattern.CASE_INSENSITIVE);
 
     /**
      * Parses the given input string into an Action.
@@ -47,6 +49,18 @@ public class CommandParser {
 
         Matcher m;
 
+        // undo
+        m = UNDO_PATTERN.matcher(input);
+        if (m.matches()) {
+            return new Action(0, 0, "UNDO", ActionType.UNDO);
+        }
+
+        // redo
+        m = REDO_PATTERN.matcher(input);
+        if (m.matches()) {
+            return new Action(0, 0, "REDO", ActionType.REDO);
+        }
+
         // roll
         m = ROLL_PATTERN.matcher(input);
         if (m.matches()) {
@@ -57,6 +71,12 @@ public class CommandParser {
         m = LIST_PATTERN.matcher(input);
         if (m.matches()) {
             return new Action(0, 0, "LIST", ActionType.LIST);
+        }
+
+        // pass/go
+        m = PASS_PATTERN.matcher(input);
+        if (m.matches()) {
+            return new Action(0, 0, "PASS", ActionType.PASS);
         }
 
         // build settlement <nodeId>

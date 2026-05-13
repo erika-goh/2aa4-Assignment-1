@@ -28,5 +28,9 @@ public enum ResourceType {
 	/**
 	 * 
 	 */
-	ORE;
+	ORE,
+	/**
+	 * 
+	 */
+	DESERT;
 }
